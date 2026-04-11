@@ -108,15 +108,15 @@ impl Window {
             .map(|s| s.to_lowercase().contains(pattern))
             .unwrap_or(false)
             || self
-                .app_id
-                .as_ref()
-                .map(|s| s.to_lowercase().contains(pattern))
-                .unwrap_or(false)
+            .app_id
+            .as_ref()
+            .map(|s| s.to_lowercase().contains(pattern))
+            .unwrap_or(false)
             || self
-                .window_properties_class
-                .as_ref()
-                .map(|s| s.to_lowercase().contains(pattern))
-                .unwrap_or(false)
+            .window_properties_class
+            .as_ref()
+            .map(|s| s.to_lowercase().contains(pattern))
+            .unwrap_or(false)
     }
 }
 
@@ -246,9 +246,9 @@ impl WM for Hyprland {
                             },
                         },
                     ),
-                )
+                    )
             })
-            .into_group_map()
+        .into_group_map()
             .into_iter()
             .map(|(k, mut v)| {
                 // Sort by position
@@ -256,22 +256,22 @@ impl WM for Hyprland {
                 (
                     format!("{k}"),
                     v.into_iter()
-                        // We don't need the position anymore. Dismiss it
-                        .map(|(_pos, w)| w)
-                        .filter(|w| w.exists())
-                        .collect(),
+                    // We don't need the position anymore. Dismiss it
+                    .map(|(_pos, w)| w)
+                    .filter(|w| w.exists())
+                    .collect(),
                 )
             })
-            .chain(empty_workspaces)
+        .chain(empty_workspaces)
             .collect())
     }
 
     fn rename_workspace(&mut self, old: &str, new: &str) -> Result<()> {
         Dispatch::call(DispatchType::RenameWorkspace(
-            old.parse().context("Failed to parse workspace id")?,
-            Some(new),
+                old.parse().context("Failed to parse workspace id")?,
+                Some(new),
         ))
-        .context(format!("Failed to rename workspace from {old} to {new}"))
+            .context(format!("Failed to rename workspace from {old} to {new}"))
     }
 
     fn wait_for_event(&mut self) -> Result<()> {
@@ -311,8 +311,8 @@ impl WM for SwayOrI3 {
         }
         for result in self
             .connection
-            .run_command(&format!("rename workspace \"{old}\" to \"{new}\"",))
-            .context("Failed to rename the workspace")?
+                .run_command(&format!("rename workspace \"{old}\" to \"{new}\"",))
+                .context("Failed to rename the workspace")?
         {
             result.context("Failed to rename the workspace")?;
         }

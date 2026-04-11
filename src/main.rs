@@ -53,7 +53,7 @@ pub enum EnforceWindowManager {
 }
 
 static LOCK: Lazy<Mutex<Option<Lockfile>>> =
-    Lazy::new(|| Mutex::new(Lockfile::create(lockfile_path()).ok()));
+Lazy::new(|| Mutex::new(Lockfile::create(lockfile_path()).ok()));
 
 fn pretty_window(config: &Config, window: &Window) -> String {
     for (name, icon) in &config.mappings {
@@ -70,18 +70,24 @@ fn pretty_windows(config: &Config, windows: &[Window]) -> String {
     let mut s = String::new();
     if config.other.deduplicate_icons {
         let mut set = HashSet::new();
-        for window in windows {
+        for (i, window) in windows.iter().enumerate() {
             let icon = pretty_window(config, window);
             if set.get(&icon).is_none() {
                 s.push_str(&icon);
-                s.push(' ');
+                // Only push a space if it's not the last window in the list
+                if i + 1 < windows.len() {
+                    s.push(' ');
+                }
                 set.insert(icon);
             }
         }
     } else {
-        for window in windows {
+        for (i, window) in windows.iter().enumerate() {
             s.push_str(&pretty_window(config, window));
-            s.push(' ');
+            // Only push a space if it's not the last window in the list
+            if i + 1 < windows.len() {
+                s.push(' ');
+            }
         }
     }
     s
@@ -144,7 +150,6 @@ fn run() -> Result<()> {
                 wm.rename_workspace(&name, &format!("{num}{sep}{new_name}"))?;
             }
         }
-
         wm.wait_for_event()?;
     }
 }

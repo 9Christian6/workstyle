@@ -2,6 +2,7 @@
 extern crate log;
 
 mod config;
+mod kitty_process;
 #[cfg(test)]
 mod tests;
 mod window_manager;
@@ -53,7 +54,7 @@ pub enum EnforceWindowManager {
 }
 
 static LOCK: Lazy<Mutex<Option<Lockfile>>> =
-Lazy::new(|| Mutex::new(Lockfile::create(lockfile_path()).ok()));
+    Lazy::new(|| Mutex::new(Lockfile::create(lockfile_path()).ok()));
 
 fn pretty_window(config: &Config, window: &Window) -> String {
     for (name, icon) in &config.mappings {
@@ -75,9 +76,9 @@ fn pretty_windows(config: &Config, windows: &[Window]) -> String {
             if set.get(&icon).is_none() {
                 s.push_str(&icon);
                 // Only push a space if it's not the last window in the list
-                if i + 1 < windows.len() {
-                    s.push(' ');
-                }
+                // if i + 1 < windows.len() {
+                s.push(' ');
+                // }
                 set.insert(icon);
             }
         }

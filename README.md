@@ -90,6 +90,14 @@ The main configuration consists of deciding which icons to use for which applica
 
 The config file is located at `${XDG_CONFIG_HOME}/workstyle/config.toml` or `/etc/xdg/workstyle/config.toml` (the former takes precedence over the latter). It will be generated if missing. Read the generated file. The syntax is in TOML and should be pretty self-explanatory.
 
+On Linux with i3, kitty windows running a foreground `codex` or `ollama`
+process are matched using that program name instead of the window title.
+Detection uses `/proc` and kitty's `WINDOWID` environment variable, so changing
+conversation titles do not affect the icon. Background, suspended, and daemon
+processes are ignored. Workstyle checks at least once per second to notice
+programs starting or exiting even when the title does not change.
+Place the `codex` and `ollama` mappings before the generic `kitty` mapping.
+
 When an app isn't recogised in the config, `workstyle` will log the application name as an error.
 Simply add that string (case insensitive) to your config file, with an icon of your choice.
 

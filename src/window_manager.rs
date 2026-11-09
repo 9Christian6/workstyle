@@ -6,9 +6,10 @@ use hyprland::event_listener::EventListener;
 use hyprland::shared::HyprData;
 use itertools::Itertools;
 use std::collections::BTreeMap;
-use std::sync::{mpsc, mpsc::Receiver};
+use std::sync::{mpsc, mpsc::Receiver, mpsc::RecvTimeoutError};
 use std::thread;
-use swayipc::{Connection, EventStream, EventType, Node, NodeType};
+use std::time::Duration;
+use swayipc::{Connection, EventType, Node, NodeType};
 
 trait NodeExt {
     fn is_workspace(&self) -> bool;
@@ -16,8 +17,11 @@ trait NodeExt {
     fn name(&self) -> Option<String>;
     fn app_id(&self) -> Option<String>;
     fn window_properties_class(&self) -> Option<String>;
-    fn windows_in_node(&self) -> Vec<Window>;
-    fn workspaces_in_node(&self) -> Result<BTreeMap<String, Vec<Window>>>;
+    fn windows_in_node(&self, clients: &BTreeMap<i64, String>) -> Vec<Window>;
+    fn workspaces_in_node(
+        &self,
+        clients: &BTreeMap<i64, String>,
+    ) -> Result<BTreeMap<String, Vec<Window>>>;
 }
 
 impl NodeExt for Node {
@@ -40,12 +44,22 @@ impl NodeExt for Node {
             .and_then(|prop| prop.class.clone())
     }
     /// Recursively find all windows names in this node
-    fn windows_in_node(&self) -> Vec<Window> {
+    fn windows_in_node(&self, clients: &BTreeMap<i64, String>) -> Vec<Window> {
         let mut res = Vec::new();
         for node in self.nodes.iter().chain(self.floating_nodes.iter()) {
-            res.extend(node.windows_in_node());
+            res.extend(node.windows_in_node(clients));
             if node.is_window() {
-                if let Some(window) = Window::from_node(node) {
+                if let Some(mut window) = Window::from_node(node) {
+                    if window
+                        .window_properties_class
+                        .as_deref()
+                        .map(|class| class.eq_ignore_ascii_case("kitty"))
+                        .unwrap_or(false)
+                    {
+                        if let Some(program) = node.window.and_then(|id| clients.get(&id)) {
+                            window.name = Some(program.clone());
+                        }
+                    }
                     res.push(window);
                 }
             }
@@ -54,16 +68,19 @@ impl NodeExt for Node {
     }
     /// Recursively find all workspaces in this node and the list of open windows for each of these
     /// workspaces
-    fn workspaces_in_node(&self) -> Result<BTreeMap<String, Vec<Window>>> {
+    fn workspaces_in_node(
+        &self,
+        clients: &BTreeMap<i64, String>,
+    ) -> Result<BTreeMap<String, Vec<Window>>> {
         let mut res = BTreeMap::new();
         for node in &self.nodes {
             if node.is_workspace() {
                 res.insert(
                     node.name().context("Expected some node name")?,
-                    node.windows_in_node(),
+                    node.windows_in_node(clients),
                 );
             } else {
-                let workspaces = node.workspaces_in_node()?;
+                let workspaces = node.workspaces_in_node(clients)?;
                 for (k, v) in workspaces {
                     res.insert(k, v);
                 }
@@ -108,15 +125,15 @@ impl Window {
             .map(|s| s.to_lowercase().contains(pattern))
             .unwrap_or(false)
             || self
-            .app_id
-            .as_ref()
-            .map(|s| s.to_lowercase().contains(pattern))
-            .unwrap_or(false)
+                .app_id
+                .as_ref()
+                .map(|s| s.to_lowercase().contains(pattern))
+                .unwrap_or(false)
             || self
-            .window_properties_class
-            .as_ref()
-            .map(|s| s.to_lowercase().contains(pattern))
-            .unwrap_or(false)
+                .window_properties_class
+                .as_ref()
+                .map(|s| s.to_lowercase().contains(pattern))
+                .unwrap_or(false)
     }
 }
 
@@ -246,9 +263,9 @@ impl WM for Hyprland {
                             },
                         },
                     ),
-                    )
+                )
             })
-        .into_group_map()
+            .into_group_map()
             .into_iter()
             .map(|(k, mut v)| {
                 // Sort by position
@@ -256,22 +273,22 @@ impl WM for Hyprland {
                 (
                     format!("{k}"),
                     v.into_iter()
-                    // We don't need the position anymore. Dismiss it
-                    .map(|(_pos, w)| w)
-                    .filter(|w| w.exists())
-                    .collect(),
+                        // We don't need the position anymore. Dismiss it
+                        .map(|(_pos, w)| w)
+                        .filter(|w| w.exists())
+                        .collect(),
                 )
             })
-        .chain(empty_workspaces)
+            .chain(empty_workspaces)
             .collect())
     }
 
     fn rename_workspace(&mut self, old: &str, new: &str) -> Result<()> {
         Dispatch::call(DispatchType::RenameWorkspace(
-                old.parse().context("Failed to parse workspace id")?,
-                Some(new),
+            old.parse().context("Failed to parse workspace id")?,
+            Some(new),
         ))
-            .context(format!("Failed to rename workspace from {old} to {new}"))
+        .context(format!("Failed to rename workspace from {old} to {new}"))
     }
 
     fn wait_for_event(&mut self) -> Result<()> {
@@ -281,19 +298,34 @@ impl WM for Hyprland {
 
 pub struct SwayOrI3 {
     connection: Connection,
-    events: EventStream,
+    events: Receiver<Result<()>>,
 }
 
 impl WM for SwayOrI3 {
     fn connect(enforce: Option<EnforceWindowManager>) -> Result<Box<Self>> {
         match enforce {
-            None | Some(EnforceWindowManager::SwayOrI3) => Ok(Box::new(Self {
-                connection: Connection::new().context("Couldn't connect to WM")?,
-                events: Connection::new()
+            None | Some(EnforceWindowManager::SwayOrI3) => {
+                let connection = Connection::new().context("Couldn't connect to WM")?;
+                let events = Connection::new()
                     .context("Couldn't connect to WM")?
                     .subscribe([EventType::Window])
-                    .context("Couldn't subscribe to events of type Window")?,
-            })),
+                    .context("Couldn't subscribe to events of type Window")?;
+                let (tx, rx) = mpsc::sync_channel(1);
+                thread::spawn(move || {
+                    for event in events {
+                        if tx
+                            .send(event.map(|_| ()).map_err(anyhow::Error::from))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+                Ok(Box::new(Self {
+                    connection,
+                    events: rx,
+                }))
+            }
             _ => bail!("Not connecting to Sway or i3 as we've explicitly been asked not to"),
         }
     }
@@ -302,7 +334,7 @@ impl WM for SwayOrI3 {
         self.connection
             .get_tree()
             .context("get_tree() failed")?
-            .workspaces_in_node()
+            .workspaces_in_node(&crate::kitty_process::foreground_clients())
     }
 
     fn rename_workspace(&mut self, old: &str, new: &str) -> Result<()> {
@@ -311,8 +343,8 @@ impl WM for SwayOrI3 {
         }
         for result in self
             .connection
-                .run_command(&format!("rename workspace \"{old}\" to \"{new}\"",))
-                .context("Failed to rename the workspace")?
+            .run_command(&format!("rename workspace \"{old}\" to \"{new}\"",))
+            .context("Failed to rename the workspace")?
         {
             result.context("Failed to rename the workspace")?;
         }
@@ -320,10 +352,11 @@ impl WM for SwayOrI3 {
     }
 
     fn wait_for_event(&mut self) -> Result<()> {
-        match self.events.next() {
-            Some(Err(e)) => Err(anyhow!(e).context("Failed to receive next event")),
-            None => bail!("Event stream ended"),
-            _ => Ok(()),
+        // Programs can start or exit without changing their terminal title.
+        match self.events.recv_timeout(Duration::from_secs(1)) {
+            Ok(result) => result.context("Failed to receive next event"),
+            Err(RecvTimeoutError::Timeout) => Ok(()),
+            Err(RecvTimeoutError::Disconnected) => bail!("Event stream ended"),
         }
     }
 }

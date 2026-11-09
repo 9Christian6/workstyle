@@ -2,32 +2,35 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-/// Match foreground AI clients to their X11 kitty window, independently of titles.
+/// Match foreground programs to their X11 kitty window, independently of titles.
 pub(crate) fn foreground_clients() -> BTreeMap<i64, String> {
     clients_in(Path::new("/proc"))
 }
 
 fn clients_in(proc_dir: &Path) -> BTreeMap<i64, String> {
-    let mut clients = BTreeMap::new();
+    let mut clients: BTreeMap<i64, (bool, String)> = BTreeMap::new();
     let Ok(entries) = fs::read_dir(proc_dir) else {
-        return clients;
+        return BTreeMap::new();
     };
     for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
             continue;
-        }
+        };
         let path = entry.path();
         let Ok(comm) = fs::read_to_string(path.join("comm")) else {
             continue;
         };
         let program = comm.trim();
-        if !matches!(program, "codex" | "ollama") {
-            continue;
-        }
+        let is_ai_client = matches!(program, "codex" | "ollama");
         let Ok(stat) = fs::read_to_string(path.join("stat")) else {
             continue;
         };
-        if !is_foreground(&stat) {
+        let Some(pgrp) = foreground_pgrp(&stat) else {
+            continue;
+        };
+        // Use the foreground job leader, ignoring its helper commands. Native AI
+        // clients may be launched by a wrapper in the same process group.
+        if pgrp != pid && !is_ai_client {
             continue;
         }
         let Ok(environ) = fs::read(path.join("environ")) else {
@@ -43,25 +46,33 @@ fn clients_in(proc_dir: &Path) -> BTreeMap<i64, String> {
                 .parse::<i64>()
                 .ok()
         }) {
-            clients.insert(window_id, program.to_owned());
+            let client = clients
+                .entry(window_id)
+                .or_insert((is_ai_client, program.to_owned()));
+            if is_ai_client && !client.0 {
+                *client = (true, program.to_owned());
+            }
         }
     }
     clients
+        .into_iter()
+        .map(|(id, (_, program))| (id, program))
+        .collect()
 }
 
-fn is_foreground(stat: &str) -> bool {
+fn foreground_pgrp(stat: &str) -> Option<u32> {
     // comm is parenthesized and may itself contain spaces or parentheses.
     let Some((_, fields)) = stat.rsplit_once(") ") else {
-        return false;
+        return None;
     };
     let fields: Vec<_> = fields.split_whitespace().take(6).collect();
     if fields.len() != 6 || matches!(fields[0], "T" | "t" | "Z" | "X") {
-        return false;
+        return None;
     }
     let pgrp = fields[2].parse::<i32>().unwrap_or(0);
     let tty = fields[4].parse::<i32>().unwrap_or(0);
     let foreground_pgrp = fields[5].parse::<i32>().unwrap_or(0);
-    tty != 0 && pgrp > 0 && pgrp == foreground_pgrp
+    (tty != 0 && pgrp > 0 && pgrp == foreground_pgrp).then_some(pgrp as u32)
 }
 
 #[cfg(test)]
@@ -70,13 +81,16 @@ mod tests {
 
     #[test]
     fn only_live_foreground_terminal_processes_match() {
-        assert!(is_foreground("42 (codex) S 1 42 1 34818 42 0"));
-        assert!(is_foreground("42 (name (with) spaces) S 1 42 1 34818 42"));
-        assert!(!is_foreground("42 (ollama) S 1 42 42 0 -1"));
-        assert!(!is_foreground("42 (codex) S 1 42 1 34818 99"));
-        assert!(!is_foreground("42 (codex) T 1 42 1 34818 42"));
-        assert!(!is_foreground("42 (codex) Z 1 42 1 34818 42"));
-        assert!(!is_foreground("invalid"));
+        assert_eq!(foreground_pgrp("42 (codex) S 1 42 1 34818 42 0"), Some(42));
+        assert_eq!(
+            foreground_pgrp("42 (name (with) spaces) S 1 42 1 34818 42"),
+            Some(42)
+        );
+        assert_eq!(foreground_pgrp("42 (ollama) S 1 42 42 0 -1"), None);
+        assert_eq!(foreground_pgrp("42 (codex) S 1 42 1 34818 99"), None);
+        assert_eq!(foreground_pgrp("42 (codex) T 1 42 1 34818 42"), None);
+        assert_eq!(foreground_pgrp("42 (codex) Z 1 42 1 34818 42"), None);
+        assert_eq!(foreground_pgrp("invalid"), None);
     }
 
     #[test]
@@ -115,6 +129,32 @@ mod tests {
                 "6 (zsh) S 0 6 6 34820 6",
                 "KITTY_WINDOW_ID=1\0WINDOWID=789\0",
             ),
+            // Helpers must not replace the job leader's identity.
+            (
+                7,
+                "python",
+                "7 (python) S 6 6 6 34820 6",
+                "KITTY_WINDOW_ID=1\0WINDOWID=789\0",
+            ),
+            (
+                8,
+                "nvim",
+                "8 (nvim) S 0 8 8 34821 8",
+                "KITTY_WINDOW_ID=1\0WINDOWID=987\0",
+            ),
+            // An AI client launched by a wrapper still gets its own identity.
+            (
+                9,
+                "node",
+                "9 (node) S 0 9 9 34822 9",
+                "KITTY_WINDOW_ID=1\0WINDOWID=654\0",
+            ),
+            (
+                10,
+                "codex",
+                "10 (codex) S 9 9 9 34822 9",
+                "KITTY_WINDOW_ID=1\0WINDOWID=654\0",
+            ),
         ] {
             let path = root.join(pid.to_string());
             fs::create_dir_all(&path).unwrap();
@@ -126,7 +166,13 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
         assert_eq!(
             result,
-            BTreeMap::from([(123, "codex".into()), (456, "ollama".into())])
+            BTreeMap::from([
+                (123, "codex".into()),
+                (456, "ollama".into()),
+                (789, "zsh".into()),
+                (987, "nvim".into()),
+                (654, "codex".into())
+            ])
         );
     }
 }

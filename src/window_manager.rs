@@ -50,16 +50,11 @@ impl NodeExt for Node {
             res.extend(node.windows_in_node(clients));
             if node.is_window() {
                 if let Some(mut window) = Window::from_node(node) {
-                    if window
-                        .window_properties_class
-                        .as_deref()
-                        .map(|class| class.eq_ignore_ascii_case("kitty"))
-                        .unwrap_or(false)
-                    {
-                        if let Some(program) = node.window.and_then(|id| clients.get(&id)) {
-                            window.name = Some(program.clone());
-                        }
-                    }
+                    window.set_kitty_program(
+                        node.window
+                            .and_then(|id| clients.get(&id))
+                            .map(String::as_str),
+                    );
                     res.push(window);
                 }
             }
@@ -98,6 +93,19 @@ pub struct Window {
 }
 
 impl Window {
+    fn set_kitty_program(&mut self, program: Option<&str>) {
+        if self
+            .window_properties_class
+            .as_deref()
+            .or(self.app_id.as_deref())
+            .map(|class| class.eq_ignore_ascii_case("kitty"))
+            .unwrap_or(false)
+        {
+            // Shell titles contain the current directory, which is not an app identity.
+            self.name = program.map(str::to_owned);
+        }
+    }
+
     fn from_node(node: &Node) -> Option<Self> {
         if node.is_window() {
             let name = node.name();
@@ -358,5 +366,55 @@ impl WM for SwayOrI3 {
             Err(RecvTimeoutError::Timeout) => Ok(()),
             Err(RecvTimeoutError::Disconnected) => bail!("Event stream ended"),
         }
+    }
+}
+
+#[cfg(test)]
+mod kitty_matching_tests {
+    use super::*;
+    use crate::{config::Config, pretty_window};
+
+    fn icon(class: &str, title: &str, program: Option<&str>) -> String {
+        let config = Config::from_str(
+            "'codex' = ''\n'ollama' = ''\n'python' = ''\n'nvim' = ''\n'ranger' = ''\n'kitty' = ''\n'youtube' = ''\n'brave' = ''",
+        ).unwrap();
+        let mut window = Window {
+            name: Some(title.into()),
+            app_id: None,
+            window_properties_class: Some(class.into()),
+        };
+        window.set_kitty_program(program);
+        pretty_window(&config, &window)
+    }
+
+    #[test]
+    fn shell_directories_cannot_select_application_icons() {
+        for path in ["python", "nvim", "ranger", "codex", "ollama"] {
+            let title = format!("Kitty: ~/projects/{path}");
+            assert_eq!(icon("kitty", &title, Some("zsh")), "");
+            assert_eq!(icon("kitty", &title, None), "");
+        }
+        assert_eq!(icon("KiTtY", "python", None), "");
+    }
+
+    #[test]
+    fn foreground_programs_keep_their_icons_regardless_of_directory() {
+        for (program, expected) in [
+            ("codex", ""),
+            ("ollama", ""),
+            ("nvim", ""),
+            ("python", ""),
+        ] {
+            assert_eq!(icon("kitty", "Kitty: ~/ranger", Some(program)), expected);
+        }
+        assert_eq!(
+            icon("kitty", "Kitty: ~/python", Some("unmapped-program")),
+            ""
+        );
+    }
+
+    #[test]
+    fn other_applications_still_match_titles() {
+        assert_eq!(icon("brave", "YouTube - Brave", None), "");
     }
 }

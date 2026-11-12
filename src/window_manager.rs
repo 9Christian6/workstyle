@@ -94,15 +94,19 @@ pub struct Window {
 
 impl Window {
     fn set_kitty_program(&mut self, program: Option<&str>) {
-        if self
+        let is_kitty = self
             .window_properties_class
             .as_deref()
             .or(self.app_id.as_deref())
             .map(|class| class.eq_ignore_ascii_case("kitty"))
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+        // The process map verifies kitty's environment and X11 window ID,
+        // including windows launched with a custom --class.
+        if is_kitty || program.is_some() {
             // Shell titles contain the current directory, which is not an app identity.
             self.name = program.map(str::to_owned);
+            // Use the generic kitty rule when the foreground program is unmapped.
+            self.window_properties_class = Some("kitty".to_owned());
         }
     }
 
@@ -411,6 +415,17 @@ mod kitty_matching_tests {
             icon("kitty", "Kitty: ~/python", Some("unmapped-program")),
             ""
         );
+    }
+
+    #[test]
+    fn custom_kitty_classes_use_foreground_programs_and_terminal_fallback() {
+        for class in ["StartupTerminal", "custom-terminal"] {
+            assert_eq!(icon(class, "Conversation | christian", Some("codex")), "");
+            assert_eq!(icon(class, "Conversation | christian", Some("ollama")), "");
+            assert_eq!(icon(class, "Kitty: ~/python", Some("zsh")), "");
+            assert_eq!(icon(class, "Kitty: ~/codex", Some("unmapped-program")), "");
+            assert_eq!(icon(class, "Kitty: ~/ranger", Some("nvim")), "");
+        }
     }
 
     #[test]

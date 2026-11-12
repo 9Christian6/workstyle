@@ -93,8 +93,12 @@ The config file is located at `${XDG_CONFIG_HOME}/workstyle/config.toml` or `/et
 On Linux with i3, kitty windows are matched using their foreground program name
 and their class. Window titles are ignored so directory names cannot select
 unrelated icons. Detection uses `/proc` and kitty's `WINDOWID` environment
-variable. If the program cannot be detected or has no matching rule, the `kitty`
-mapping applies. Place program mappings before the generic `kitty` mapping.
+variable. This also recognizes kitty windows launched with a custom `--class`,
+such as `StartupTerminal`, and uses the generic `kitty` mapping when their
+foreground program has no matching rule. Their actual X11 class is unchanged.
+The `kitty` mapping also applies when the program cannot be detected for a
+window with the standard kitty class. Place program mappings before the generic
+`kitty` mapping.
 
 The foreground job leader supplies the program name; helper commands are
 ignored. Native `codex` and `ollama` processes also take precedence over their

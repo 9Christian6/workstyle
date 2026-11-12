@@ -3,19 +3,17 @@
 # Format:
 # "pattern" = "icon"
 #
-# The pattern will be used to match against the application name, class_id or WM_CLASS.
+# Patterns match foreground programs, app_id or WM_CLASS, never window titles.
 # The icon will be used to represent that application.
 #
-# Note if multiple patterns are present in the same application name,
-# precedence is given in order of apparition in this file.
+# Foreground program matches precede terminal matches. Within each group,
+# the first matching pattern in this file wins. Matching ignores case.
+# Add scoped title exceptions with [[overrides]] below.
 
 "alacritty" = ""
-"github" = ""
-"rust" = ""
-"google" = ""
-"private browsing" = ""
 "firefox" = ""
 "chrome" = ""
+"brave" = ""
 "file manager" = ""
 "libreoffice calc" = ""
 "libreoffice writer" = ""
@@ -29,7 +27,17 @@
 "mpv" = ""
 "music" = ""
 "disk usage" = ""
-".pdf" = ""
+
+# Exceptions run before program mappings; the first matching exception wins.
+[[overrides]]
+app = "brave"
+title = "YouTube"
+icon = ""
+
+[[overrides]]
+app = "brave"
+title = "Twitch"
+icon = ""
 
 [other]
 fallback_icon = "🤨"

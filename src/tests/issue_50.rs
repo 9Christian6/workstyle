@@ -96,6 +96,7 @@ deduplicate_icons = true";
 #[test]
 fn test_pretty_window() {
     let w = Window {
+        program: None,
         name: Some("Icons Icon | Font Awesome - Chromium".to_string()),
         app_id: None,
         window_properties_class: Some("chromium".to_string()),

@@ -62,9 +62,7 @@ fn clients_in(proc_dir: &Path) -> BTreeMap<i64, String> {
 
 fn foreground_pgrp(stat: &str) -> Option<u32> {
     // comm is parenthesized and may itself contain spaces or parentheses.
-    let Some((_, fields)) = stat.rsplit_once(") ") else {
-        return None;
-    };
+    let (_, fields) = stat.rsplit_once(") ")?;
     let fields: Vec<_> = fields.split_whitespace().take(6).collect();
     if fields.len() != 6 || matches!(fields[0], "T" | "t" | "Z" | "X") {
         return None;

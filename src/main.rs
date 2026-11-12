@@ -57,8 +57,21 @@ static LOCK: Lazy<Mutex<Option<Lockfile>>> =
     Lazy::new(|| Mutex::new(Lockfile::create(lockfile_path()).ok()));
 
 fn pretty_window(config: &Config, window: &Window) -> String {
+    for rule in &config.overrides {
+        if (window.matches_program(&rule.app) || window.matches_application(&rule.app))
+            && window.matches_title(&rule.title)
+        {
+            return rule.icon.clone();
+        }
+    }
+    // Prefer the foreground program even when its terminal's rule comes first.
     for (name, icon) in &config.mappings {
-        if window.matches(name) {
+        if window.matches_program(name) {
+            return icon.clone();
+        }
+    }
+    for (name, icon) in &config.mappings {
+        if window.matches_application(name) {
             return icon.clone();
         }
     }
@@ -71,14 +84,11 @@ fn pretty_windows(config: &Config, windows: &[Window]) -> String {
     let mut s = String::new();
     if config.other.deduplicate_icons {
         let mut set = HashSet::new();
-        for (i, window) in windows.iter().enumerate() {
+        for window in windows {
             let icon = pretty_window(config, window);
-            if set.get(&icon).is_none() {
+            if !set.contains(&icon) {
                 s.push_str(&icon);
-                // Only push a space if it's not the last window in the list
-                // if i + 1 < windows.len() {
                 s.push(' ');
-                // }
                 set.insert(icon);
             }
         }

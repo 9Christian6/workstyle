@@ -13,7 +13,16 @@ const DEFAULT_CONFIG: &str = include_str!("../default_config.toml");
 #[derive(Debug, Default, Clone)]
 pub struct Config {
     pub mappings: IndexMap<String, String>,
+    pub overrides: Vec<TitleOverride>,
     pub other: Other,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TitleOverride {
+    pub app: String,
+    pub title: String,
+    pub icon: String,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -57,7 +66,12 @@ impl Config {
         let sep = self.other.separator.as_deref();
         if let Some(sep) = sep {
             let fallback_icon = self.fallback_icon();
-            if let Some(icon) = self.mappings.values().find(|icon| icon.contains(sep)) {
+            if let Some(icon) = self
+                .mappings
+                .values()
+                .chain(self.overrides.iter().map(|rule| &rule.icon))
+                .find(|icon| icon.contains(sep))
+            {
                 error!("Can't use separator: \"{sep}\" as it is contained in icon: \"{icon}\".");
                 DEFAULT_SEPARATOR
             } else if fallback_icon.contains(sep) {
@@ -116,6 +130,16 @@ impl<'de> Deserialize<'de> for Config {
                 while let Some((key, value)) = map.next_entry::<String, toml::Value>()? {
                     if key == "other" {
                         config.other = Other::deserialize(value).map_err(A::Error::custom)?;
+                    } else if key == "overrides" {
+                        config.overrides =
+                            Vec::<TitleOverride>::deserialize(value).map_err(A::Error::custom)?;
+                        for rule in &config.overrides {
+                            if rule.app.trim().is_empty() || rule.title.trim().is_empty() {
+                                return Err(A::Error::custom(
+                                    "override app and title must not be empty",
+                                ));
+                            }
+                        }
                     } else {
                         config
                             .mappings

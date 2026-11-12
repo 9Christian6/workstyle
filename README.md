@@ -90,15 +90,60 @@ The main configuration consists of deciding which icons to use for which applica
 
 The config file is located at `${XDG_CONFIG_HOME}/workstyle/config.toml` or `/etc/xdg/workstyle/config.toml` (the former takes precedence over the latter). It will be generated if missing. Read the generated file. The syntax is in TOML and should be pretty self-explanatory.
 
-On Linux with i3, kitty windows are matched using their foreground program name
-and their class. Window titles are ignored so directory names cannot select
-unrelated icons. Detection uses `/proc` and kitty's `WINDOWID` environment
-variable. This also recognizes kitty windows launched with a custom `--class`,
-such as `StartupTerminal`, and uses the generic `kitty` mapping when their
-foreground program has no matching rule. Their actual X11 class is unchanged.
-The `kitty` mapping also applies when the program cannot be detected for a
-window with the standard kitty class. Place program mappings before the generic
-`kitty` mapping.
+Ordinary mappings match application identity, never window titles or content.
+GUI applications use their `app_id` or `WM_CLASS`: a Brave window stays Brave
+even when its page title mentions Python, Neovim, or GitHub. Existing flat
+title-based mappings must be converted to explicit exceptions to keep matching
+titles.
+
+On Linux with i3, kitty additionally uses the foreground program detected through
+`/proc` and kitty's `WINDOWID` environment variable. Neovim inside kitty gets
+the Neovim icon; a shell in any directory gets the kitty icon unless you explicitly
+map the shell itself. Custom kitty classes such as `StartupTerminal` are supported
+without changing their actual X11 class. If no program rule matches, workstyle
+tries the terminal's `kitty` mapping. Foreground detection is currently specific
+to kitty on X11/i3; other terminals and Wayland use their application identity.
+
+```toml
+'kitty' = ''
+'nvim' = ''
+'brave-browser' = ''
+
+[[overrides]]
+app = 'brave-browser'
+title = 'YouTube'
+icon = ''
+
+[[overrides]]
+app = 'brave-browser'
+title = 'Twitch'
+icon = ''
+
+[other]
+fallback_icon = '-'
+```
+
+Matching follows this order:
+
+1. The first matching `[[overrides]]` exception, requiring **both** `app` and
+   `title` to match. `app` matches the foreground program or the host application;
+   `title` matches the original window title. Both selectors must be nonempty.
+2. The first ordinary mapping matching the foreground program.
+3. The first ordinary mapping matching the window's `app_id` or `WM_CLASS`
+   (normalized to `kitty` for detected kitty windows).
+4. `[other].fallback_icon` (default `-`).
+
+All patterns are case-insensitive literal substrings, not regular expressions.
+Order within each group follows the configuration file. Place specific
+exceptions such as `YouTube Music` before broader ones such as `YouTube`.
+Program rules beat terminal rules even if `kitty` is listed before `nvim`.
+To add an exception, append another `[[overrides]]` block; remove it to restore
+the application icon. An exception only inspects the title, not the page URL,
+so any title containing the chosen text qualifies within the selected app.
+
+Keep ordinary mappings at the top, before any TOML table headers. Each
+`[[overrides]]` starts a new exception; `[other]` holds the general settings.
+On i3, edits are picked up automatically within about one second.
 
 The foreground job leader supplies the program name; helper commands are
 ignored. Native `codex` and `ollama` processes also take precedence over their
@@ -110,7 +155,7 @@ title does not change.
 When an app isn't recogised in the config, `workstyle` will log the application name as an error.
 Simply add that string (case insensitive) to your config file, with an icon of your choice.
 
-If no matching icon can be found in the config, a blank space will be used.
+If no matching icon can be found in the config, `-` will be used.
 To override this, set the default icon in the config as per below:
 ```toml
 [other]

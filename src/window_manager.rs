@@ -88,6 +88,7 @@ impl NodeExt for Node {
 #[derive(Debug)]
 pub struct Window {
     pub(crate) name: Option<String>,
+    pub(crate) program: Option<String>,
     pub(crate) app_id: Option<String>,
     pub(crate) window_properties_class: Option<String>,
 }
@@ -103,8 +104,7 @@ impl Window {
         // The process map verifies kitty's environment and X11 window ID,
         // including windows launched with a custom --class.
         if is_kitty || program.is_some() {
-            // Shell titles contain the current directory, which is not an app identity.
-            self.name = program.map(str::to_owned);
+            self.program = program.map(str::to_owned);
             // Use the generic kitty rule when the foreground program is unmapped.
             self.window_properties_class = Some("kitty".to_owned());
         }
@@ -118,6 +118,7 @@ impl Window {
             if name.is_some() || app_id.is_some() || window_properties_class.is_some() {
                 Some(Self {
                     name,
+                    program: None,
                     app_id,
                     window_properties_class,
                 })
@@ -131,22 +132,24 @@ impl Window {
     fn exists(&self) -> bool {
         self.name.is_some() || self.app_id.is_some() || self.window_properties_class.is_some()
     }
-    pub fn matches(&self, pattern: &str) -> bool {
-        self.name
-            .as_ref()
-            .map(|s| s.to_lowercase().contains(pattern))
-            .unwrap_or(false)
-            || self
-                .app_id
-                .as_ref()
-                .map(|s| s.to_lowercase().contains(pattern))
-                .unwrap_or(false)
-            || self
-                .window_properties_class
-                .as_ref()
-                .map(|s| s.to_lowercase().contains(pattern))
-                .unwrap_or(false)
+    pub fn matches_program(&self, pattern: &str) -> bool {
+        contains_pattern(self.program.as_deref(), pattern)
     }
+
+    pub fn matches_application(&self, pattern: &str) -> bool {
+        contains_pattern(self.app_id.as_deref(), pattern)
+            || contains_pattern(self.window_properties_class.as_deref(), pattern)
+    }
+
+    pub fn matches_title(&self, pattern: &str) -> bool {
+        contains_pattern(self.name.as_deref(), pattern)
+    }
+}
+
+fn contains_pattern(value: Option<&str>, pattern: &str) -> bool {
+    value
+        .map(|value| value.to_lowercase().contains(&pattern.to_lowercase()))
+        .unwrap_or(false)
 }
 
 pub trait WM {
@@ -264,6 +267,7 @@ impl WM for Hyprland {
                             client.at.0, /* x position in px */
                         ),
                         Window {
+                            program: None,
                             name: match client.title.as_str() {
                                 "" => None,
                                 s => Some(s.to_string()),
@@ -281,7 +285,7 @@ impl WM for Hyprland {
             .into_iter()
             .map(|(k, mut v)| {
                 // Sort by position
-                v.sort_by(|(l, _), (r, _)| l.cmp(r));
+                v.sort_by_key(|(position, _)| *position);
                 (
                     format!("{k}"),
                     v.into_iter()
@@ -355,7 +359,7 @@ impl WM for SwayOrI3 {
         }
         for result in self
             .connection
-            .run_command(&format!("rename workspace \"{old}\" to \"{new}\"",))
+            .run_command(format!("rename workspace \"{old}\" to \"{new}\""))
             .context("Failed to rename the workspace")?
         {
             result.context("Failed to rename the workspace")?;
@@ -384,6 +388,7 @@ mod kitty_matching_tests {
         ).unwrap();
         let mut window = Window {
             name: Some(title.into()),
+            program: None,
             app_id: None,
             window_properties_class: Some(class.into()),
         };
@@ -429,7 +434,7 @@ mod kitty_matching_tests {
     }
 
     #[test]
-    fn other_applications_still_match_titles() {
-        assert_eq!(icon("brave", "YouTube - Brave", None), "");
+    fn other_applications_ignore_titles_by_default() {
+        assert_eq!(icon("brave", "YouTube - Brave", None), "");
     }
 }
